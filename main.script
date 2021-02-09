@@ -1,0 +1,737 @@
+#
+# Main logic: start/stop/restart/status a JAVA program
+#
+# Author: mail _^_ AT _^_ wangbo _^_ im
+#
+
+#
+# Enable strict bash mode
+set -euo pipefail
+IFS=$'\t\n'
+
+#LOG_LEVEL_ENABLED="INFO"
+#LOG_LEVEL_ENABLED="WARN"
+LOG_LEVEL_ENABLED="DEBUG"
+
+################################################################################
+#
+# Customizable variables and functions for different profile
+#
+################################################################################
+
+#
+# Profile (refer to different config directories)
+PROFILE=""
+
+#
+# Full main class to be ran
+#
+# If set, java would be ran using `java -cp ... $MAIN_CLASS` style command,
+# otherwise, run `java -jar first_jar_found_in_project_dir.jar`
+MAIN_CLASS=""
+
+#
+# Customize java VM options.
+#
+# Both variables JAVA_OPT and JAVA_OPTS would be used to add new customized arguments.
+#
+# When using JAVA_OPT, append customized arguments like: JAVA_OPT="$JAVA_OPT --arg1 --arg2"
+JAVA_OPT=""
+# When using JAVA_OPTS, append customized arguments like: 
+#   JAVA_OPTS[${#JAVA_OPTS[@]}]="--arg1"
+#   JAVA_OPTS[${#JAVA_OPTS[@]}]="--arg2"
+JAVA_OPTS=("")
+
+#
+# Customize main application arguments.
+#
+# Both variables MAIN_ARG and MAIN_ARGS would be used to add new customized arguments.
+#
+# When using MAIN_ARG, append customized arguments like: MAIN_ARG="$MAIN_ARG --arg1 --arg2"
+MAIN_ARG=""
+# When using MAIN_ARGS, append customized arguments like: 
+#   MAIN_ARGS[${#MAIN_ARGS[@]}]="--arg1"
+#   MAIN_ARGS[${#MAIN_ARGS[@]}]="--arg2"
+MAIN_ARGS=("")
+
+################################################################################
+#
+# Main logic started here
+#
+################################################################################
+
+CONFIG="config"
+CLASSES="classes"
+LIBS=(
+    "lib"
+    "libs"
+)
+ENVS=(
+    ".env"
+    "env"
+    "ENV"
+    "env.conf"
+)
+LOGBACK_FILENAMES=(
+    "logback.xml"
+)
+JUL_FILENAMES=(
+    "logging.properties"
+)
+
+WARN_LEVEL=10
+INFO_LEVEL=20
+DEBUG_LEVEL=30
+
+#
+# $1: log level
+# $2 .. $N: additional args
+__log() {
+    local enabled_log_level="${LOG_LEVEL_ENABLED:-}"
+    case "$enabled_log_level" in
+        WARN)
+            enabled_log_level=$WARN_LEVEL
+            ;;
+        INFO)
+            enabled_log_level=$INFO_LEVEL
+            ;;
+        DEBUG)
+            enabled_log_level=$DEBUG_LEVEL
+            ;;
+        *)
+            enabled_log_level=$WARN_LEVEL
+            ;;
+    esac
+
+    local log_level=$1
+    shift
+
+    if [ $log_level -le $enabled_log_level ]; then
+        case $log_level in 
+            $INFO_LEVEL)
+                echo -e "\033[33m\033[01m\033[05m[INFO] $@ \033[0m"
+                ;;
+            $WARN_LEVEL)
+                echo -e "\033[31m\033[01m[WARN] $@ \033[0m"
+                ;;
+            $DEBUG_LEVEL)
+                echo "[DEBUG] $@"
+                ;;
+            *)
+                # Do nothing
+                ;;
+        esac
+    fi
+}
+
+__warn() {
+    __log $WARN_LEVEL $@
+}
+__info() {
+    __log $INFO_LEVEL $@
+}
+__debug() {
+    __log $DEBUG_LEVEL $@
+}
+
+#
+# find java cmd
+__javaPath() {
+if [ -n "${JAVA_HOME:-}" ]; then
+  echo "$JAVA_HOME/bin/java"
+else
+  p=$(type java 2>&1 | awk '{print $3}')
+  if [ -x "$p" ]; then
+    echo "$p"
+  else
+    __warn "No java found in PATH"
+    false
+  fi
+fi
+}
+
+#
+# $1: java executable name/path
+__javaVersion() {
+#
+# Typical output of `java -version`:
+#
+# java version "1.8.0_231"
+# Java(TM) SE Runtime Environment (build 1.8.0_231-b11)
+# Java HotSpot(TM) 64-Bit Server VM (build 25.231-b11, mixed mode)
+#
+# java version "11.0.7" 2020-04-14 LTS
+# Java(TM) SE Runtime Environment 18.9 (build 11.0.7+8-LTS)
+# Java HotSpot(TM) 64-Bit Server VM 18.9 (build 11.0.7+8-LTS, mixed mode)
+#
+# openjdk version "11.0.7" 2020-04-14 LTS
+# OpenJDK Runtime Environment Corretto-11.0.7.10.1 (build 11.0.7+10-LTS)
+# OpenJDK 64-Bit Server VM Corretto-11.0.7.10.1 (build 11.0.7+10-LTS, mixed mode)
+#
+# java version "11.0.7" 2020-04-14 LTS
+# Java(TM) SE Runtime Environment GraalVM LIBGRAAL_EE_BASH 19.3.2 (build 11.0.7+8-LTS-jvmci-19.3-b09)
+# Java HotSpot(TM) 64-Bit Server VM GraalVM LIBGRAAL_EE_BASH 19.3.2 (build 11.0.7+8-LTS-jvmci-19.3-b09, mixed mode, sharing)
+#
+v=$("$1" -version 2>&1 | awk '/version/{print $3}' | sed -n 's/"//gp; q')
+echo "$v"
+}
+
+#
+# Start predefined java cmd and blocked
+#
+# The result of this starting process is determined by
+# __check function, i.e., __check exits with 0 indicating
+# a successful starting, otherwise a failed starting.
+#
+# $1: target project directory
+# $2: target project tag
+__start() {
+    local project_dir="${1:?No project dir specified}"
+    local iam_tag="${2:?No tag specified}"
+
+    __debug "Starting java project \"$project_dir\" tagged with \"$iam_tag\""
+
+    local unslashed_project_dir="${project_dir%%/}"
+    if [ -z "$unslashed_project_dir" ]; then 
+        __warn "Invalid project dir specified: \"$project_dir\""
+        false
+    fi
+    local unslashed_working_dir="${unslashed_project_dir}.working_dir"
+    mkdir -p "$unslashed_working_dir"
+
+    __info "Project directory set to \"$unslashed_project_dir\""
+    __info "Working directory set to \"$unslashed_working_dir\""
+
+    local java_cmd=`__javaPath`
+    __debug "Java binary: \"$java_cmd\""
+
+    local java_version=`__javaVersion $java_cmd`
+    __debug "Java version: \"$java_version\""
+
+    local start_datetime="`date +%Y%m%dT%H%M%S`"
+    local tz="`date +%z`"
+
+    # Predefined JVM options
+    local java_opts=(
+        "-Diam.startedAt=${start_datetime}${tz}"
+        "-Diam.tagged=${iam_tag}"
+    )
+
+    # load project env
+    # Usually defined PROFILE
+    bflag=""
+    for each_i in "${ENVS[@]}"; do
+        each_i="${each_i##/}"
+        each_i="${each_i%%/}"
+
+        if [ -n "$each_i" ]; then
+            local env_filepath="$unslashed_working_dir/$each_i"
+            if [ -f "$env_filepath" -a -z "$bflag" ]; then
+                __info "Loading project env from \"$env_filepath\""
+                . "${env_filepath}"
+                bflag="1"
+            elif [ -f "$env_filepath" ]; then
+                __debug "Project env file \"$env_filepath\" found but ignored"
+            else
+                __debug "Project env file \"$env_filepath\" not found so ignored"
+            fi
+        fi
+    done
+
+    # profile name trimmed leading '/' and trailing '/'
+    local current_profile="${PROFILE:-}"
+    current_profile="${current_profile##/}"
+    current_profile="${current_profile%%/}"
+
+    __info "Profile set to \"$current_profile\""
+    java_opts[${#java_opts[@]}]="-Diam.profile=${current_profile}"
+
+    java_opts[${#java_opts[@]}]="-Dfile.encoding=UTF-8"
+    case "$java_version" in
+      1.6* | 1.7* | 1.8*)
+        java_opts[${#java_opts[@]}]="-Xloggc:gc.${start_datetime}.log"
+        java_opts[${#java_opts[@]}]="-XX:+PrintGCDetails"
+        java_opts[${#java_opts[@]}]="-XX:+PrintGCTimeStamps"
+        java_opts[${#java_opts[@]}]="-XX:+PrintGCDateStamps"
+        ;;
+      *)
+        # 9 | 10 | 11 and later
+        java_opts[${#java_opts[@]}]="--illegal-access=warn"
+        java_opts[${#java_opts[@]}]="-Xlog:gc+heap=info:file=gc.${start_datetime}.log::filecount=10,filesize=100M"
+        ;;
+    esac
+
+    __debug "Java opts before processing configs:\\"
+    for each_arg in "${java_opts[@]}"; do
+        __debug "    \"${each_arg}\" \\"
+    done
+
+    # create dir links in working dir pointing to target profile
+    local unslashed_p_config_dir="${unslashed_project_dir}/$CONFIG"
+    local unslashed_config_dir="${unslashed_working_dir}/$CONFIG"
+    if [ -n "${current_profile}" ]; then
+        local tmp="${unslashed_p_config_dir}/${current_profile}"
+        if [ -d "${tmp}" ]; then
+            unslashed_p_config_dir="${tmp}"
+            __debug "Profile named \"${current_profile}\" found in \"${unslashed_p_config_dir}\""
+        else
+            __debug "No profile named \"${current_profile}\" found in \"${unslashed_p_config_dir}\""
+        fi
+    fi
+    if [ -d "${unslashed_p_config_dir}" ]; then
+        __debug "Dir \"$unslashed_p_config_dir/\" found, try to symlink it as \"$unslashed_config_dir\""
+        if [ -L "${unslashed_config_dir}" ]; then
+            __debug "Delete old existed symlink \"$unslashed_config_dir\" pointing to \"$(realpath $unslashed_config_dir)\""
+            rm -f "${unslashed_config_dir}"
+        else
+            local tmp="${unslashed_config_dir}.saved_$start_datetime"
+            __debug "Rename old existed file/directory \"$unslashed_config_dir\" to \"$tmp\""
+            mv "${unslashed_config_dir}" "$tmp"
+        fi
+        ln -sf "${unslashed_p_config_dir}/" "${unslashed_config_dir}"
+        __debug "Create symlink \"$unslashed_config_dir\" to \"$unslashed_p_config_dir/\""
+
+        __info "Config directory set to \"$unslashed_config_dir\""
+    else
+        __debug "Dir \"$unslashed_p_config_dir\" not found, ignore symlink config step"
+    fi
+
+    local bflag=""
+
+    __debug "Java opts before loading customized settings:\\"
+    for each_arg in "${java_opts[@]}"; do
+        __debug "    \"${each_arg}\" \\"
+    done
+
+    # load profile specific env
+    # Usually define JAVA_OPT/JAVA_OPTS/MAIN_ARG/MAIN_ARGS
+    bflag=""
+    for each_i in "${ENVS[@]}"; do
+        each_i="${each_i##/}"
+        each_i="${each_i%%/}"
+
+        if [ -n "$each_i" ]; then
+            local env_filepath="$unslashed_config_dir/$each_i"
+            if [ -f "$env_filepath" -a -z "$bflag" ]; then
+                __info "Loading profile env from \"$env_filepath\""
+                . "${env_filepath}"
+                bflag="1"
+            elif [ -f "$env_filepath" ]; then
+                __debug "Profile env file \"$env_filepath\" found but ignored"
+            else
+                __debug "Profile env file \"$env_filepath\" not found so ignored"
+            fi
+        fi
+    done
+
+    # Customized JVM options
+    #
+    # Var JAVA_OPT use space to separate items
+    IFS=$' \t\n'
+    for each_opt in $JAVA_OPT; do
+        case "$each_opt" in 
+            "")
+                # Do nothing
+                ;;
+            "-"*)
+                java_opts[${#java_opts[@]}]="${each_opt}"
+                ;;
+            *)
+                __warn "Found illegal java option \"$each_opt\" customzied using JAVA_OPT"
+                ;;
+        esac
+    done
+    IFS=$'\t\n'
+    # Var JAVA_OPTS use array to store items
+    for each_opt in "${JAVA_OPTS[@]}"; do
+        case "$each_opt" in 
+            "")
+                # Do nothing
+                ;;
+            "-"*)
+                java_opts[${#java_opts[@]}]="${each_opt}"
+                ;;
+            *)
+                __warn "Found illegal java option customzied using JAVA_OPTS"
+                ;;
+        esac
+    done
+
+    __debug "Java opts after loading customized jvm settings:\\"
+    for each_arg in "${java_opts[@]}"; do
+        __debug "    \"${each_arg}\" \\"
+    done
+
+    # Option for logback config file
+    bflag=""
+    for each_i in "${LOGBACK_FILENAMES[@]}"; do
+        each_i="${each_i##/}"
+        each_i="${each_i%%/}"
+
+        if [ -n "$each_i" -a -z "$bflag" ]; then
+            local logging_file="${unslashed_config_dir}/$each_i"
+            if [ -f "${logging_file}" ]; then
+                __debug "Logback setting file \"$logging_file\" found, add logback related options"
+                java_opts[${#java_opts[@]}]="-Dlogback.configurationFile=${logging_file}"
+                bflag="1"
+            fi
+        fi
+    done
+    # Option for jul config file
+    # FIXME: jul config file may not loaded if logback files loaded
+    bflag=""
+    for each_i in "${JUL_FILENAMES[@]}"; do
+        each_i="${each_i##/}"
+        each_i="${each_i%%/}"
+
+        if [ -n "$each_i" -a -z "$bflag" ]; then
+            local logging_file="${unslashed_config_dir}/$each_i"
+            if [ -f "${logging_file}" ]; then
+                __debug "java.util.logging setting file \"$logging_file\" found, add jul related options"
+                java_opts[${#java_opts[@]}]="-Djava.util.logging.config.file=${logging_file}"
+                bflag="1"
+            fi
+        fi
+    done
+
+    __debug "Java opts after detecting logging config files:\\"
+    for each_arg in "${java_opts[@]}"; do
+        __debug "    \"${each_arg}\" \\"
+    done
+
+    # if not defined MAIN_CLASS, run java with "-jar",
+    # otherwise using main class
+    if [ -n "${MAIN_CLASS:-}" ]; then
+        __info "MAIN_CLASS set to \"$MAIN_CLASS\", try to start project using MAIN CLASS way"
+
+        # Option for classpath, "-classpath"
+        local classpath=""
+        local classes_dirpath="${unslashed_project_dir}/$CLASSES"
+        if [ -d "${classes_dirpath}/" ]; then 
+            classpath="${classpath}:${classes_dirpath}"
+            __debug "Append \"$classes_dirpath\" into classpath"
+        fi
+        for each_i in "${LIBS[@]}"; do
+            each_i="${each_i##/}"
+            each_i="${each_i%%/}"
+
+            if [ -n "$each_i" ]; then
+                classpath_dirpath="${unslashed_project_dir}/$each_i"
+                if [ -d "${classpath_dirpath}" ]; then
+                    for each_jar in "${classpath_dirpath}"/*.jar; do
+                        if [ -f "${each_jar}" ]; then 
+                            classpath="${classpath}:${each_jar}"
+                            __debug "Append \"$each_jar\" into classpath"
+                        fi
+                    done
+                fi
+            fi
+        done
+        classpath="${classpath#:}"
+        if [ -n "${classpath}" ]; then
+            java_opts[${#java_opts[@]}]="-classpath"
+            java_opts[${#java_opts[@]}]="${classpath}"
+        fi
+
+        # Main-Class option
+        java_opts[${#java_opts[@]}]="$MAIN_CLASS"
+    else
+        __info "No MAIN_CLASS set, try to start project using MAIN JAR way"
+
+        # Option for "-jar"
+        local main_jar_filepath=""
+        for each_i in "$unslashed_project_dir"/*.jar; do
+            if [ -f "$each_i" ]; then
+                main_jar_filepath="$main_jar_filepath $each_i"
+                __debug "Found main jar \"$each_i\""
+            fi
+        done
+        main_jar_filepath="${main_jar_filepath## }"
+
+        if [ -f "$main_jar_filepath" ]; then
+            java_opts[${#java_opts[@]}]="-jar"
+            java_opts[${#java_opts[@]}]="${main_jar_filepath}"
+        elif [ -n "$main_jar_filepath" ]; then
+            # multiple jars found
+            __warn "Multiple jars found in \"$unslashed_project_dir\", please package into a single executable jar: $main_jar_filepath"
+            false
+        else
+            # no jar found
+            __warn "No jar found in \"$unslashed_project_dir\", please package a single executable jar"
+            false
+        fi
+    fi
+
+    __debug "Java opts after adding -classpath or -jar entrypoint:\\"
+    for each_arg in "${java_opts[@]}"; do
+        __debug "    \"${each_arg}\" \\"
+    done
+
+    # Customized main args
+    # Var MAIN_ARG use space to separate items
+    IFS=$' \t\n'
+    for each_opt in $MAIN_ARG; do
+        if [ -n "$each_opt" ]; then
+            java_opts[${#java_opts[@]}]="${each_opt}"
+        fi
+    done
+    IFS=$'\t\n'
+    # Var MAIN_ARGS use array to store items
+    for each_opt in "${MAIN_ARGS[@]}"; do
+        if [ -n "$each_opt" ]; then
+            java_opts[${#java_opts[@]}]="${each_opt}"
+        fi
+    done
+
+    __debug "Java opts after loading customized main settings:\\"
+    for each_arg in "${java_opts[@]}"; do
+        __debug "    \"${each_arg}\" \\"
+    done
+
+    __info "Entering directory \"${unslashed_working_dir}\" ..."
+    cd "$unslashed_working_dir"
+
+    __info "Starting service \"${unslashed_project_dir}\" ..."
+
+    __info "Executing: ${java_cmd} \\"
+    for each_arg in "${java_opts[@]}"; do
+        __info "    \"${each_arg}\" \\"
+    done
+
+    # actual executing
+    "${java_cmd}" "${java_opts[@]}"
+    #nohup "${java_cmd}" "${java_opts[@]}" > /dev/null 2>&1 &
+}
+
+#
+# Stop predefined java cmd, wait until stopped
+#
+# Always exit with 0
+#
+# However the exit code is ignored.  The result of this stopping
+# process is determined by __check function, i.e., __check exits with 1 indicating
+# a successful stopping, otherwise a failed stopping.
+#
+# $1: target project directory
+# $2: target project tag
+__stop() {
+    local project_dir="${1:?No project dir specified}"
+    local iam_tag="${2:?No tag specified}"
+
+    __debug "Stopping java project \"$project_dir\" tagged with \"$iam_tag\""
+
+    local prev_process=`ps -o pid,command -C "java" | grep -F "iam.tagged=${iam_tag}" | awk '{print $1}'`
+
+    while [ -n "${prev_process}" ]; do
+        __info Stopping service \"${project_dir}\" \"${prev_process}\"
+
+        # Double check to ensure the target process exists
+        local temp_str=`ps --no-headers -o pid,command -p "${prev_process}"`
+        if [ -n "${temp_str}" ]; then
+            __info kill "${prev_process}"
+            kill "${prev_process}"
+
+            # No need to sleep waiting for killing result
+            sleep 1s
+        fi
+
+        __info Waiting service \"${project_dir}\" \"${prev_process}\" to exit
+
+        prev_process=`ps -o pid,command -C "java" | grep -F "iam.tagged=${iam_tag}" | awk '{print $1}'`
+    done
+}
+
+#
+# Check if pid exists by java cmd and project name
+#
+# Exit with 0 if pid exists, otherwise non-zero
+#
+# $1: target project directory
+# $2: target project tag
+__check() {
+    __debug "Checking status of java project \"$project_dir\" tagged with \"$iam_tag\""
+
+    # grep exit with code 0 if found matched item, otherwise non-zero (typically 1)
+    local iam_tag="${2:?No tag specified}"
+    ps -o pid,command -C "java" | grep -F "iam.tagged=${iam_tag}"
+}
+
+#
+# Deploy artifact and update symlinks
+#
+# $1: target project directory
+# $2: artifact file(Support jar/gz(*.tar.gz *.tgz)/bz2(*.tar.bz2 *.tar.bz *.tbz *.tbz2)/xz(*.tar.xz *.txz) format)
+__deploy() {
+    local project_dir="${1:?No project dir specified}"
+    local artifact_file="${2:?No artifact file specified}"
+
+    __debug "Deploying java project \"$project_dir\" from artifact \"$artifact_file\""
+
+    local unslashed_project_dir="${project_dir%%/}"
+    if [ -z "$unslashed_project_dir" ]; then 
+        __warn "Invalid project dir specified: \"$project_dir\""
+        false
+    fi
+
+    local dt=$(date +%Y%m%dT%H%M%S)
+
+    if [ -f "$artifact_file" ]; then
+        local tagged_project_dir="$unslashed_project_dir.deployed_at_$dt"
+        mkdir -p "${tagged_project_dir}"
+
+        case "$artifact_file" in 
+            *".tar.gz"|*".tgz")
+                __debug "Unpacking \"$artifact_file\" into \"$tagged_project_dir\": gzip"
+                tar -zxf "$artifact_file" -C "$tagged_project_dir/"
+                ;;
+            *".tar.bz2"|*".tbz2"|*".tar.bz"|*".tbz")
+                __debug "Unpacking \"$artifact_file\" into \"$tagged_project_dir\": bzip2"
+                tar -jxf "$artifact_file" -C "$tagged_project_dir/"
+                ;;
+            *".tar.xz"|*".txz")
+                __debug "Unpacking \"$artifact_file\" into \"$tagged_project_dir\": xz"
+                tar -Jxf "$artifact_file" -C "$tagged_project_dir/"
+                ;;
+            *)
+                __debug "Moving \"$artifact_file\" into \"$tagged_project_dir\": unknown"
+                cp -f "$artifact_file" "$tagged_project_dir/"
+                ;;
+        esac
+
+        if [ -L "$unslashed_project_dir" ]; then
+            __debug "Delete old existed symlink \"$unslashed_project_dir\" pointing to \"$(realpath $unslashed_project_dir)\""
+            rm -f "$unslashed_project_dir"
+        else 
+            local tmp="$unslashed_project_dir.saved_$dt"
+            __debug "Rename old existed file/directory \"$unslashed_project_dir\" to \"$tmp\""
+            mv "${unslashed_project_dir}" "$tmp"
+        fi
+        ln -sf "$tagged_project_dir" "$unslashed_project_dir"
+
+        __info "Artifact file \"$artifact_file\" being deployed into \"$tagged_project_dir\""
+    else
+        __warn "Artifact file \"$artifact_file\" not exists"
+        false
+    fi
+}
+
+#
+# Deploy artifact and update symlinks
+#
+# $1: target project directory
+__rollback() {
+    local project_dir="${1:?No project dir specified}"
+
+    __debug "Rollbacking java project \"$project_dir\""
+
+    local unslashed_project_dir="${project_dir%%/}"
+    if [ -z "$unslashed_project_dir" ]; then 
+        __warn "Invalid project dir specified: \"$project_dir\""
+        false
+    fi
+
+    local cur="$(realpath $unslashed_project_dir)"
+    __info "Current deployment: $cur"
+
+    local c=("")
+    __info "Available deployments to be rollbacked:"
+    for each_i in "$unslashed_project_dir.deployed_at_"*; do
+        if [ -d "$each_i" -a "$each_i" != "$cur" ]; then
+            __info "[${#c[@]}] $each_i"
+            c[${#c[@]}]="$each_i"
+        fi
+    done
+    if [ ${#c[@]} -gt 1 ]; then
+        printf "Choose a deployment to be rollbacked (by index or by name): "
+        read choice
+
+        local citem=""
+
+        local tmp=0
+        for each_i in "${c[@]}"; do
+            if [ $tmp -gt 0 -a -z "$citem" ]; then
+                __debug "Item [$tmp] \"$each_i\""
+                if [ "$choice" == "$tmp" ]; then
+                    __debug "Chosen by index"
+                    citem="$each_i"
+                elif [ "$choice" == "$each_i" ]; then
+                    __debug "Chosen by name"
+                    citem="$each_i"
+                else
+                    __debug "Ignored"
+                fi
+            fi
+            tmp=$(($tmp + 1))
+        done
+        __debug "Choose \"$citem\" by \"$choice\""
+        if [ -n "$citem" ]; then
+            if [ -L "$unslashed_project_dir" ]; then
+                __debug "Delete old existed symlink \"$unslashed_project_dir\" pointing to \"$(realpath $unslashed_project_dir)\""
+                rm -f "$unslashed_project_dir"
+            else 
+                local tmp="$unslashed_project_dir.saved_$dt"
+                __debug "Rename old existed file/directory \"$unslashed_project_dir\" to \"$tmp\""
+                mv "${unslashed_project_dir}" "$tmp"
+            fi
+            ln -sf "$citem" "$unslashed_project_dir"
+
+            __info "Project \"$unslashed_project_dir\" being rollbacked to \"$citem\""
+        else
+            __warn "Invalid choice \"$choice\""
+            false
+        fi
+    fi
+}
+
+#
+# Main entry
+
+# $1 is parsed as target working directory
+target_project_dir="${1:-.}"; shift
+__debug "Parsed target_project_dir: \"$target_project_dir\""
+target_project_dir=$(realpath -s "${target_project_dir}")
+__debug "Expanded target_project_dir: \"$target_project_dir\""
+
+# trim and keep only 1 slash ('/') as suffix, to avoid problems of soft symbolic to directory
+target_project_dir="${target_project_dir%%/}/"
+if [ -d "$target_project_dir" ]; then
+    iam_tag=`realpath -s $target_project_dir | sha256sum | cut -d ' ' -f 1`
+
+    # $2 .. $N is/are parsed as commands
+    while [ "$#" -gt "0" ]; do
+        each_arg="$1"; shift
+        __debug "Parsed command \"$each_arg\""
+        case "${each_arg}" in
+            "start")
+                __start "$target_project_dir" "$iam_tag"
+                ;;
+            "stop")
+                __stop "$target_project_dir" "$iam_tag"
+                ;;
+            "check")
+                __check "$target_project_dir" "$iam_tag"
+                ;;
+            "status")
+                __check "$target_project_dir" "$iam_tag"
+                ;;
+            "deploy")
+                tmp="${1:-}"; shift
+                if [ -n "$tmp" -a -f "$tmp" ]; then
+                    __deploy "$target_project_dir" "$tmp"
+                fi
+                ;;
+            "rollback")
+                __rollback "$target_project_dir"
+                ;;
+            *)
+                __warn "Unknown command \"${each_arg}\""
+                false
+                ;;
+        esac
+    done
+else
+    __warn "Working directory not exists: $target_project_dir"
+    false
+fi
+
+# vim:set nu rnu list et sr ts=4 sw=4 ft=sh:
