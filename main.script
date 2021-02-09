@@ -244,7 +244,7 @@ __start() {
     current_profile="${current_profile%%/}"
 
     __info "Profile set to \"$current_profile\""
-    java_opts[${#java_opts[@]}]="-Diam.profile=${current_profile}"
+    java_opts[${#java_opts[@]}]="-Diam.profile=${current_profile:-NOT_SET}"
 
     java_opts[${#java_opts[@]}]="-Dfile.encoding=UTF-8"
     case "$java_version" in
@@ -407,6 +407,11 @@ __start() {
         # Option for classpath, "-classpath"
         local classpath=""
         local classes_dirpath="${unslashed_project_dir}/$CLASSES"
+        if [ -d "${classes_dirpath}/" ]; then 
+            classpath="${classpath}:${classes_dirpath}"
+            __debug "Append \"$classes_dirpath\" into classpath"
+        fi
+        classes_dirpath="${unslashed_config_dir}"
         if [ -d "${classes_dirpath}/" ]; then 
             classpath="${classpath}:${classes_dirpath}"
             __debug "Append \"$classes_dirpath\" into classpath"
