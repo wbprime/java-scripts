@@ -15,7 +15,7 @@ SCRIPT_FILE_PATH=`realpath $0`
 SCRIPT_DIR_PATH=`dirname "${SCRIPT_FILE_PATH}"`
 MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
-usage() {
+__usage() {
     echo ""
     echo "Usage: ${SCRIPT_FILE_PATH##*/} project_dir"
     echo ""
@@ -32,12 +32,12 @@ if [ $# -eq 1 ]; then
         echo "You should restarted it manually against \"$target_dir\""
     else
         echo "Project directory \"$target_dir\" not exists"
-        usage
+        __usage
         exit 1
     fi
 else
     echo "Incorrect number of arguments"
-    usage
+    __usage
     exit 1
 fi
 

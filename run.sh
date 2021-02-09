@@ -15,7 +15,7 @@ SCRIPT_FILE_PATH=`realpath $0`
 SCRIPT_DIR_PATH=`dirname "${SCRIPT_FILE_PATH}"`
 MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
-usage() {
+__usage() {
     echo ""
     echo "Usage: ${SCRIPT_FILE_PATH##*/} COMMAND PATH_TO_TARGET_PROJECT_DIR"
     echo ""
@@ -28,31 +28,31 @@ usage() {
 if [ $# -eq 2 ]; then
     d="$2"
     d="${d%%/}/"
-    if [ -d "$d/" ]; then
+    if [ -d "$d" ]; then
         case "$1" in
             "start"|"stop"|"check"|"status")
-                bash "$MAIN_SCRIPT_PATH" "$2" "$1"
+                bash "$MAIN_SCRIPT_PATH" "$d" "$1"
                 ;;
             "restart")
-                bash "$MAIN_SCRIPT_PATH" "$2" stop start
+                bash "$MAIN_SCRIPT_PATH" "$d" stop start
                 ;;
             "help")
-                usage
+                __usage
                 ;;
             *)
                 echo "Unknown command \"$1\""
-                usage
+                __usage
                 exit 1
                 ;;
         esac
     else 
         echo "Project directory not exists"
-        usage
+        __usage
         exit 1
     fi
 else
     echo "Incorrect number of arguments"
-    usage
+    __usage
     exit 1
 fi
 

@@ -15,7 +15,7 @@ SCRIPT_FILE_PATH=`realpath $0`
 SCRIPT_DIR_PATH=`dirname "${SCRIPT_FILE_PATH}"`
 MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
-usage() {
+__usage() {
     echo ""
     echo "Usage: ${SCRIPT_FILE_PATH##*/} artifact_file project_dir"
     echo "   OR: ${SCRIPT_FILE_PATH##*/} project_dir artifact_file"
@@ -37,7 +37,7 @@ if [ $# -eq 2 ]; then
         target_dir="${a%%/}"
     else
         echo "No artifact file specified"
-        usage
+        __usage
         exit 1
     fi
 
@@ -48,7 +48,7 @@ if [ $# -eq 2 ]; then
     echo "You should restarted it manually against \"$target_dir\""
 else
     echo "Incorrect number of arguments"
-    usage
+    __usage
     exit 1
 fi
 
