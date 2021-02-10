@@ -612,7 +612,26 @@ __stop() {
 #
 # Check if pid exists by java cmd and project name
 #
-# Exit with 0 if pid exists, otherwise non-zero
+# Always exit with 0
+#
+# $1: target project directory
+# $2: target project tag
+__status() {
+    local project_dir="${1:?No project dir specified}"
+    local iam_tag="${2:?No tag specified}"
+    __debug "Checking status of java project \"$project_dir\" tagged with \"$iam_tag\""
+
+    # grep exit with code 0 if found matched item, otherwise non-zero (typically 1)
+    local iam_tag="${2:?No tag specified}"
+    ps -o pid,command -C "java" | {
+        grep -F "iam.tagged=${iam_tag}" || __warn Project \"$project_dir\" stopped or not started
+    }
+}
+
+#
+# Check if pid exists by java cmd and project name
+#
+# Exit with 0 if found process for given project, otherwise non-zero.
 #
 # $1: target project directory
 # $2: target project tag
@@ -785,7 +804,7 @@ if [ -d "$target_project_dir" ]; then
                 __check "$target_project_dir" "$iam_tag"
                 ;;
             "status")
-                __check "$target_project_dir" "$iam_tag"
+                __status "$target_project_dir" "$iam_tag"
                 ;;
             "deploy")
                 tmp="${1:-}"; shift

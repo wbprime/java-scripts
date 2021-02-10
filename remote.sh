@@ -117,9 +117,8 @@ __async_run() {
                 fi
             done
 
+            local h="$remote_user@$each_i"
             if [ -z "$is_local" ]; then
-                local h="$remote_user@$each_i"
-
                 # delay to run in xargs
                 echo "${SSH[@]}" $h bash "$MAIN_SCRIPT_PATH" "$d/" "$c" >> $tmp_file
             else
@@ -154,9 +153,8 @@ __sync_run() {
                 fi
             done
 
+            local h="$remote_user@$each_i"
             if [ -z "$is_local" ]; then
-                local h="$remote_user@$each_i"
-
                 echo "Try to run \"$c\" for \"$d\" on remote host \"$h\""
                 "${SSH[@]}" $h bash "$MAIN_SCRIPT_PATH" "$d/" "$c"
                 echo "Try to run \"$c\" for \"$d\" on remote host \"$h\" --> DONE"
