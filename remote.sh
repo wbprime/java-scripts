@@ -105,7 +105,6 @@ __sync() {
 __async_run() {
     local d="${1%%/}"
     local c="$2"
-    echo "Try to run \"$c\" for \"$d\" on remote hosts"
 
     local tmp_file=".tmp.$(date +%Y%m%dT%H%M%S.%N)"
     echo -n "" > $tmp_file
@@ -114,7 +113,6 @@ __async_run() {
             is_local=""
             for each_j in "${local_ips[@]}"; do
                 if [ "$each_i" == "$each_j" ]; then
-                    echo "Configured remote ip \"$each_i\" is of localhost, ignore it"
                     is_local="Y"
                 fi
             done
@@ -132,11 +130,11 @@ __async_run() {
     done
     echo "echo All Done !!!" >> $tmp_file
 
+    echo "Try to run \"$c\" for \"$d\" on all configured hosts"
     cat $tmp_file | xargs -I "{}" -n1 -P$PARALLELISM bash -c '{}'
+    echo "Try to run \"$c\" for \"$d\" on all configured hosts --> DONE"
 
     echo rm -f $tmp_file
-
-    echo "Try to run \"$c\" for \"$d\" on remote hosts --> DONE"
 }
 
 #
@@ -147,13 +145,11 @@ __async_run() {
 __sync_run() {
     local d="${1%%/}"
     local c="$2"
-    echo "Try to run \"$c\" for \"$d\" on remote hosts"
     for each_i in "${REMOTE_IPS[@]}"; do
         if [ -n "$each_i" ]; then
             is_local=""
             for each_j in "${local_ips[@]}"; do
                 if [ "$each_i" == "$each_j" ]; then
-                    echo "Configured remote ip \"$each_i\" is of localhost, ignore it"
                     is_local="Y"
                 fi
             done
@@ -161,13 +157,16 @@ __sync_run() {
             if [ -z "$is_local" ]; then
                 local h="$remote_user@$each_i"
 
+                echo "Try to run \"$c\" for \"$d\" on remote host \"$h\""
                 "${SSH[@]}" $h bash "$MAIN_SCRIPT_PATH" "$d/" "$c"
+                echo "Try to run \"$c\" for \"$d\" on remote host \"$h\" --> DONE"
             else
-                echo bash "$MAIN_SCRIPT_PATH" "$d/" "$c"
+                echo "Try to run \"$c\" for \"$d\" on local host \"$h\""
+                bash "$MAIN_SCRIPT_PATH" "$d/" "$c"
+                echo "Try to run \"$c\" for \"$d\" on local host \"$h\" --> DONE"
             fi
         fi
     done
-    echo "Try to run \"$c\" for \"$d\" on remote hosts --> DONE"
 }
 
 c="${1:-sync}"; shift || true

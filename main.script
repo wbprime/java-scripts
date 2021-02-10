@@ -547,9 +547,9 @@ __execute() {
 
     # actual executing
     if [ -n "$foreground" ]; then
-        "${java_cmd}" "${java_opts[@]}"
+        "${java_cmd}" "${java_opts[@]}" >console.${start_datetime}.log 2>&1
     else
-        nohup "${java_cmd}" "${java_opts[@]}" > /dev/null 2>&1 &
+        nohup "${java_cmd}" "${java_opts[@]}" >console.${start_datetime}.log 2>&1 &
     fi
 }
 
@@ -617,6 +617,8 @@ __stop() {
 # $1: target project directory
 # $2: target project tag
 __check() {
+    local project_dir="${1:?No project dir specified}"
+    local iam_tag="${2:?No tag specified}"
     __debug "Checking status of java project \"$project_dir\" tagged with \"$iam_tag\""
 
     # grep exit with code 0 if found matched item, otherwise non-zero (typically 1)
