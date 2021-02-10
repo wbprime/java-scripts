@@ -36,7 +36,7 @@ MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
 __usage() {
     echo ""
-    echo "Usage: ${SCRIPT_FILE_PATH##*/} PATH_TO_TARGET_PROJECT_DIR COMMAND [REMOTE_IP ...]"
+    echo "Usage: ${SCRIPT_FILE_PATH##*/} COMMAND PATH_TO_TARGET_PROJECT_DIR [REMOTE_IP ...]"
     echo ""
     echo -e "\twhere COMMAND is one command listing here:"
     echo -e "\t\tstart stop restart status sync run"
@@ -170,6 +170,8 @@ __sync_run() {
     echo "Try to run \"$c\" for \"$d\" on remote hosts --> DONE"
 }
 
+c="${1:-sync}"; shift || true
+
 d="${1:-}"; shift || true
 if [ ! -d "$d" ]; then
     echo "Project directory not exists \"$d\""
@@ -177,8 +179,6 @@ if [ ! -d "$d" ]; then
     exit 1
 fi
 d="$(realpath -s $d)"
-
-c="${1:-sync}"; shift || true
 
 REMOTE_IPS=("")
 for each_i in "$@"; do

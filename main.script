@@ -231,7 +231,17 @@ __execute() {
         each_i="${each_i%%/}"
 
         if [ -n "$each_i" ]; then
-            local env_filepath="$unslashed_working_dir/$each_i"
+            local env_filepath="$unslashed_project_dir/$each_i"
+            if [ -f "$env_filepath" -a -z "$bflag" ]; then
+                __info "Loading project env from \"$env_filepath\""
+                . "${env_filepath}"
+                bflag="1"
+            elif [ -f "$env_filepath" ]; then
+                __debug "Project env file \"$env_filepath\" found but ignored"
+            else
+                __debug "Project env file \"$env_filepath\" not found so ignored"
+            fi
+            env_filepath="$unslashed_working_dir/$each_i"
             if [ -f "$env_filepath" -a -z "$bflag" ]; then
                 __info "Loading project env from \"$env_filepath\""
                 . "${env_filepath}"
@@ -289,7 +299,7 @@ __execute() {
         if [ -L "${unslashed_config_dir}" ]; then
             __debug "Delete old existed symlink \"$unslashed_config_dir\" pointing to \"$(realpath $unslashed_config_dir)\""
             rm -f "${unslashed_config_dir}"
-        else
+        elif [ -e "$unslashed_config_dir" ]; then
             local tmp="${unslashed_config_dir}.saved_$start_datetime"
             __debug "Rename old existed file/directory \"$unslashed_config_dir\" to \"$tmp\""
             mv "${unslashed_config_dir}" "$tmp"
@@ -633,7 +643,7 @@ __deploy() {
         if [ -L "$unslashed_project_dir" ]; then
             __debug "Delete old existed symlink \"$unslashed_project_dir\" pointing to \"$(realpath $unslashed_project_dir)\""
             rm -f "$unslashed_project_dir"
-        else 
+        elif [ -e "$unslashed_project_dir" ]; then
             local tmp="$unslashed_project_dir.saved_$dt"
             __debug "Rename old existed file/directory \"$unslashed_project_dir\" to \"$tmp\""
             mv "${unslashed_project_dir}" "$tmp"
@@ -700,7 +710,7 @@ __rollback() {
             if [ -L "$unslashed_project_dir" ]; then
                 __debug "Delete old existed symlink \"$unslashed_project_dir\" pointing to \"$(realpath $unslashed_project_dir)\""
                 rm -f "$unslashed_project_dir"
-            else 
+            elif [ -e "$unslashed_project_dir" ]; then
                 local tmp="$unslashed_project_dir.saved_$dt"
                 __debug "Rename old existed file/directory \"$unslashed_project_dir\" to \"$tmp\""
                 mv "${unslashed_project_dir}" "$tmp"
