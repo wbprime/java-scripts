@@ -21,14 +21,14 @@ LOG_LEVEL_ENABLED="DEBUG"
 
 #
 # Profile (refer to different config directories)
-PROFILE=""
+PROFILE="${PROFILE:-}"
 
 #
 # Full main class to be ran
 #
 # If set, java would be ran using `java -cp ... $MAIN_CLASS` style command,
 # otherwise, run `java -jar first_jar_found_in_project_dir.jar`
-MAIN_CLASS=""
+MAIN_CLASS="${MAIN_CLASS:-}"
 
 #
 # Customize java VM options.
@@ -177,17 +177,23 @@ echo "$v"
 }
 
 #
-# Start predefined java cmd and blocked
-#
-# The result of this starting process is determined by
-# __check function, i.e., __check exits with 0 indicating
-# a successful starting, otherwise a failed starting.
+# Execute predefined java cmd
 #
 # $1: target project directory
 # $2: target project tag
-__start() {
+# $3: "FOREGROUND" or "BACKGROUND"
+__execute() {
     local project_dir="${1:?No project dir specified}"
     local iam_tag="${2:?No tag specified}"
+    local foreground="" # default to background
+    if [ "$3" == "FOREGROUND" ]; then
+        foreground="1"
+    elif [ "$3" == "BACKGROUND" ]; then
+        foreground=""
+    else
+        __warn "Invalid argument \$3: \"$3\""
+        false
+    fi
 
     __debug "Starting java project \"$project_dir\" tagged with \"$iam_tag\""
 
@@ -218,7 +224,7 @@ __start() {
     )
 
     # load project env
-    # Usually defined PROFILE
+    # Usually define PROFILE
     bflag=""
     for each_i in "${ENVS[@]}"; do
         each_i="${each_i##/}"
@@ -496,7 +502,7 @@ __start() {
     __info "Entering directory \"${unslashed_working_dir}\" ..."
     cd "$unslashed_working_dir"
 
-    __info "Starting service \"${unslashed_project_dir}\" ..."
+    __info "Executing service \"${unslashed_project_dir}\" ..."
 
     __info "Executing: ${java_cmd} \\"
     for each_arg in "${java_opts[@]}"; do
@@ -504,8 +510,29 @@ __start() {
     done
 
     # actual executing
-    "${java_cmd}" "${java_opts[@]}"
-    #nohup "${java_cmd}" "${java_opts[@]}" > /dev/null 2>&1 &
+    if [ -n "$foreground" ]; then
+        "${java_cmd}" "${java_opts[@]}"
+    else
+        nohup "${java_cmd}" "${java_opts[@]}" > /dev/null 2>&1 &
+    fi
+}
+
+#
+# Run predefined java cmd in background (daemon).
+#
+# $1: target project directory
+# $2: target project tag
+__start() {
+    __execute "$1" "$2" "BACKGROUND"
+}
+
+#
+# Run predefined java cmd in foreground (blocking waiting for exit).
+#
+# $1: target project directory
+# $2: target project tag
+__run() {
+    __execute "$1" "$2" "FOREGROUND"
 }
 
 #
@@ -707,6 +734,9 @@ if [ -d "$target_project_dir" ]; then
         each_arg="$1"; shift
         __debug "Parsed command \"$each_arg\""
         case "${each_arg}" in
+            "run")
+                __run "$target_project_dir" "$iam_tag"
+                ;;
             "start")
                 __start "$target_project_dir" "$iam_tag"
                 ;;
