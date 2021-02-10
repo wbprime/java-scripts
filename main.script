@@ -72,7 +72,16 @@ ENVS=(
     "ENV"
     "env.conf"
 )
+LOG4J2_FILENAMES=(
+    "logback.properties"
+    "logback.yaml"
+    "logback.yml"
+    "logback.json"
+    "logback.jsn"
+    "logback.xml"
+)
 LOGBACK_FILENAMES=(
+    "logback.groovy"
     "logback.xml"
 )
 JUL_FILENAMES=(
@@ -378,6 +387,21 @@ __execute() {
         __debug "    \"${each_arg}\" \\"
     done
 
+    # Option for log4j2 config file
+    bflag=""
+    for each_i in "${LOG4J2_FILENAMES[@]}"; do
+        each_i="${each_i##/}"
+        each_i="${each_i%%/}"
+
+        if [ -n "$each_i" -a -z "$bflag" ]; then
+            local logging_file="${unslashed_config_dir}/$each_i"
+            if [ -f "${logging_file}" ]; then
+                __debug "Log4j2 config file \"$logging_file\" found, add log4j2 related options"
+                java_opts[${#java_opts[@]}]="-Dlog4j.configurationFile=${logging_file}"
+                bflag="1"
+            fi
+        fi
+    done
     # Option for logback config file
     bflag=""
     for each_i in "${LOGBACK_FILENAMES[@]}"; do
@@ -387,7 +411,7 @@ __execute() {
         if [ -n "$each_i" -a -z "$bflag" ]; then
             local logging_file="${unslashed_config_dir}/$each_i"
             if [ -f "${logging_file}" ]; then
-                __debug "Logback setting file \"$logging_file\" found, add logback related options"
+                __debug "Logback config file \"$logging_file\" found, add logback related options"
                 java_opts[${#java_opts[@]}]="-Dlogback.configurationFile=${logging_file}"
                 bflag="1"
             fi
@@ -403,7 +427,7 @@ __execute() {
         if [ -n "$each_i" -a -z "$bflag" ]; then
             local logging_file="${unslashed_config_dir}/$each_i"
             if [ -f "${logging_file}" ]; then
-                __debug "java.util.logging setting file \"$logging_file\" found, add jul related options"
+                __debug "java.util.logging config file \"$logging_file\" found, add jul related options"
                 java_opts[${#java_opts[@]}]="-Djava.util.logging.config.file=${logging_file}"
                 bflag="1"
             fi

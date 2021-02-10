@@ -16,13 +16,13 @@ REMOTE_USER="${REMOTE_USER:-}"
 PARALLELISM="${PARALLELISM:-4}"
 
 SSH=(
-    "echo"
+    #"echo"
     "ssh"
     "-4"
     "-T"
 )
 RSYNC=(
-    "echo"
+    #"echo"
     "rsync"
     "-4"
     "-a"
