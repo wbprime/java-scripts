@@ -9,8 +9,6 @@
 set -euo pipefail
 IFS=$'\t\n'
 
-#REMOTE_IPS=("")
-
 REMOTE_USER="${REMOTE_USER:-}"
 
 PARALLELISM="${PARALLELISM:-4}"
@@ -39,22 +37,32 @@ RSYNC=(
     # "--bwlimit=1.5m"
 )
 
+LOG_LEVEL="${LOG_LEVEL:-WARN}"
+export LOG_LEVEL
+
 #
 # Dirs
 SCRIPT_FILE_PATH=`realpath $0`
 SCRIPT_DIR_PATH=`dirname "${SCRIPT_FILE_PATH}"`
 MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
+# source common config
+for each_i in "${SCRIPT_DIR_PATH}"/include.*.conf; do
+    if [ -f "$each_i" ]; then . "$each_i"; fi
+done
+
 __usage() {
-    echo ""
-    echo "Usage: ${SCRIPT_FILE_PATH##*/} COMMAND PATH_TO_TARGET_PROJECT_DIR [REMOTE_IP ...]"
-    echo ""
-    echo -e "\twhere COMMAND is one command listing here:"
-    echo -e "\t\tstart stop restart status sync run"
-    echo -e "\t      PATH_TO_TARGET_PROJECT_DIR is a symlink to or the directory for target project"
-    echo -e "\t      REMOTE_IP-s are ip for target hosts"
-    echo "OR ${SCRIPT_FILE_PATH##*/} exec_to_be_ran_via_ssh"
-    echo ""
+    __warn ""
+    __warn "Usage: ${SCRIPT_FILE_PATH##*/} COMMAND PATH_TO_TARGET_PROJECT_DIR [REMOTE_IP ...]"
+    __warn ""
+    __warn "\twhere COMMAND is one command listing here:"
+    __warn "\t\tstart stop restart status sync run"
+    __warn "\t      PATH_TO_TARGET_PROJECT_DIR is a symlink to or the directory for target project"
+    __warn "\t      REMOTE_IP-s are ip for target hosts"
+    __warn ""
+    __warn "OR ${SCRIPT_FILE_PATH##*/} ssh exec [args ...]"
+    __warn "OR ${SCRIPT_FILE_PATH##*/} scp file_to_scp_from_remote_to_local [more_files ...]"
+    __warn ""
 }
 
 
@@ -76,13 +84,13 @@ fi
 __sync() {
     local d="${1%%/}"
     local deref_d="$(realpath $d)"
-    echo "Try to sync \"$d\" to remote hosts"
+    __debug "Try to sync \"$d\" to remote hosts"
     for each_i in "${REMOTE_IPS[@]}"; do
         if [ -n "$each_i" ]; then
             is_local=""
             for each_j in "${local_ips[@]}"; do
                 if [ "$each_i" == "$each_j" ]; then
-                    echo "Configured remote ip \"$each_i\" is of localhost, ignore it"
+                    __info "Configured remote ip \"$each_i\" is of localhost, ignore it"
                     is_local="Y"
                 fi
             done
@@ -90,23 +98,23 @@ __sync() {
             if [ -z "$is_local" ]; then
                 local h="$remote_user@$each_i"
 
-                echo "Try to sync \"$d\" to remote host \"$h\""
+                __debug "Try to sync \"$d\" to remote host \"$h\""
 
-                echo "Syncing directory \"$deref_d\" to host \"$h\""
+                __debug "Syncing directory \"$deref_d\" to host \"$h\""
                 "${RSYNC[@]}" "$deref_d/" "$h:$deref_d"
-                echo "Syncing directory \"$deref_d\" to host \"$h\" --> DONE"
+                __info "Syncing directory \"$deref_d\" to host \"$h\" --> DONE"
                 if [ "$d" != "$deref_d" ]; then
-                    echo "Updating symlink \"$d\" to \"$deref_d\" on host \"$h\""
+                    __debug "Updating symlink \"$d\" to \"$deref_d\" on host \"$h\""
                     "${SSH[@]}" $h rm -f "$d"
                     "${SSH[@]}" $h ln -sf "$deref_d" "$d"
-                    echo "Updating symlink \"$d\" to \"$deref_d\" on host \"$h\" --> DONE"
+                    __info "Updating symlink \"$d\" to \"$deref_d\" on host \"$h\" --> DONE"
                 fi
 
-                echo "Try to sync \"$d\" to remote host \"$h\" --> DONE"
+                __debug "Try to sync \"$d\" to remote host \"$h\" --> DONE"
             fi
         fi
     done
-    echo "Try to sync \"$d\" to remote hosts --> DONE"
+    __debug "Try to sync \"$d\" to remote hosts --> DONE"
 }
 
 #
@@ -141,11 +149,11 @@ __async_run() {
     done
     echo "echo All Done !!!" >> $tmp_file
 
-    echo "Try to run \"$c\" for \"$d\" on all configured hosts"
+    __debug "Try to run \"$c\" for \"$d\" on all configured hosts"
     cat $tmp_file | xargs -I "{}" -n1 -P$PARALLELISM bash -c '{}'
-    echo "Try to run \"$c\" for \"$d\" on all configured hosts --> DONE"
+    __info "Try to run \"$c\" for \"$d\" on all configured hosts --> DONE"
 
-    echo rm -f $tmp_file
+    rm -f $tmp_file
 }
 
 #
@@ -167,13 +175,13 @@ __sync_run() {
 
             local h="$remote_user@$each_i"
             if [ -z "$is_local" ]; then
-                echo "Try to run \"$c\" for \"$d\" on remote host \"$h\""
+                __debug "Try to run \"$c\" for \"$d\" on remote host \"$h\""
                 "${SSH[@]}" $h bash "$MAIN_SCRIPT_PATH" "$d/" "$c"
-                echo "Try to run \"$c\" for \"$d\" on remote host \"$h\" --> DONE"
+                __info "Try to run \"$c\" for \"$d\" on remote host \"$h\" --> DONE"
             else
-                echo "Try to run \"$c\" for \"$d\" on local host \"$h\""
+                __debug "Try to run \"$c\" for \"$d\" on local host \"$h\""
                 bash "$MAIN_SCRIPT_PATH" "$d/" "$c"
-                echo "Try to run \"$c\" for \"$d\" on local host \"$h\" --> DONE"
+                __info "Try to run \"$c\" for \"$d\" on local host \"$h\" --> DONE"
             fi
         fi
     done
@@ -184,6 +192,7 @@ __sync_run() {
 #
 # $@: files to be scp back
 __scp() {
+    local msg=""
     for each_f in "$@"; do
         local lf="${each_f##*/}"
         lf="${lf%%/}"
@@ -198,27 +207,23 @@ __scp() {
 
                 local h="$remote_user@$each_i"
 
-                echo -n "Try to scp \"$each_f\""
+                local lff="${lf}_${each_i}"
+
+                msg="Try to scp \"$each_f\" as \"$lff\""
                 if [ -z "$is_local" ]; then
-                    echo -n " from remote host \"$h\""
+                    msg="$msg from remote host \"$h\""
                 else
-                    echo -n " from localhost"
+                    msg="$msg from localhost"
                 fi
-                echo "" # new line
+                __debug "$msg"
 
                 if [ -z "$is_local" ]; then
-                    "${SCP[@]}" "$h:$each_f" "${lf}_${each_i}"
+                    "${SCP[@]}" "$h:$each_f" "${lff}"
                 else
-                    cp -f "$each_f" "${lf}_${each_i}"
+                    cp -f "$each_f" "${lff}"
                 fi
 
-                echo -n "Try to scp \"$each_f\""
-                if [ -z "$is_local" ]; then
-                    echo -n " from remote host \"$h\""
-                else
-                    echo -n " from localhost"
-                fi
-                echo " --> DONE"
+                __info "$msg --> DONE"
             fi
         done
     done
@@ -229,6 +234,7 @@ __scp() {
 #
 # $@: exec and args to be ran
 __ssh() {
+    local msg=""
     for each_i in "${REMOTE_IPS[@]}"; do
         if [ -n "$each_i" ]; then
             is_local=""
@@ -238,18 +244,19 @@ __ssh() {
                 fi
             done
 
-            echo -n "Try to exec"
+            local h="$remote_user@$each_i"
+
+            msg="Try to exec"
             for each_k in "$@"; do
-                echo -n " \"$each_k\""
+                msg="$msg \"$each_k\""
             done
 
-            local h="$remote_user@$each_i"
             if [ -z "$is_local" ]; then
-                echo -n " on remote host \"$h\""
+                msg="$msg on remote host \"$h\""
             else
-                echo -n " on localhost"
+                msg="$msg on localhost"
             fi
-            echo "" # new line
+            __debug "$msg"
 
             if [ -z "$is_local" ]; then
                 "${SSH[@]}" $h "$@"
@@ -257,16 +264,7 @@ __ssh() {
                 "$@"
             fi
 
-            echo -n "Try to exec"
-            for each_k in "$@"; do
-                echo -n " \"$each_k\""
-            done
-            if [ -z "$is_local" ]; then
-                echo -n " on remote host \"$h\""
-            else
-                echo -n " on localhost"
-            fi
-            echo " --> DONE"
+            __info "$msg --> DONE"
         fi
     done
 }
@@ -274,22 +272,26 @@ __ssh() {
 c="${1:-sync}"; shift || true
 
 d="${1:-}"; shift || true
-d="$(realpath -s $d)"
+if [ -n "$d" ]; then d="$(realpath -s $d)"; fi
 
 __assert_directory_exists_or_exit() {
-    if [ ! -d "$1" ]; then
-        echo "Project directory not exists \"$1\""
+    if [ -z "$1" ]; then
+        __fatal "Project directory not specified"
+        __usage
+        exit 1
+    elif [ ! -d "$1" ]; then
+        __fatal "Project directory \"$1\" not exists"
         __usage
         exit 1
     fi
 }
 
-REMOTE_IPS=("")
+REMOTE_IPS=(""); tmp=0
 for each_i in "$@"; do
-    REMOTE_IPS[${#REMOTE_IPS[@]}]="$each_i"
+    REMOTE_IPS[$((tmp++))]="$each_i"
 done
 
-echo "Try to execute command \"$c\" for project \"$d\" onto \"${REMOTE_IPS[@]}\""
+__debug "Try to execute command \"$c\" for project \"$d\" onto \"${REMOTE_IPS[@]}\""
 case "$c" in
     "start"|"stop"|"status"| "check")
         __assert_directory_exists_or_exit "$d"
@@ -338,11 +340,11 @@ case "$c" in
         __usage
         ;;
     *)
-        echo "Unknown command \"$c\""
+        __fatal "Unknown command \"$c\""
         __usage
         exit 1
         ;;
 esac
-echo "Try to execute command \"$c\" for project \"$d\" onto \"${REMOTE_IPS[@]}\" --> DONE"
+__info "Try to execute command \"$c\" for project \"$d\" onto \"${REMOTE_IPS[@]}\" --> DONE"
 
 # vim:set nu rnu list et sr ts=4 sw=4 ft=sh:

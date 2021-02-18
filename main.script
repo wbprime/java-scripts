@@ -9,10 +9,6 @@
 set -euo pipefail
 IFS=$'\t\n'
 
-LOG_LEVEL_ENABLED="INFO"
-#LOG_LEVEL_ENABLED="WARN"
-#LOG_LEVEL_ENABLED="DEBUG"
-
 ################################################################################
 #
 # Customizable variables and functions for different profile
@@ -54,6 +50,8 @@ MAIN_ARG=""
 #   MAIN_ARGS[${#MAIN_ARGS[@]}]="--arg2"
 MAIN_ARGS=("")
 
+LOG_LEVEL="${LOG_LEVEL:-WARN}"
+
 ################################################################################
 #
 # Main logic started here
@@ -88,60 +86,16 @@ JUL_FILENAMES=(
     "logging.properties"
 )
 
-WARN_LEVEL=10
-INFO_LEVEL=20
-DEBUG_LEVEL=30
-
 #
-# $1: log level
-# $2 .. $N: additional args
-__log() {
-    local enabled_log_level="${LOG_LEVEL_ENABLED:-}"
-    case "$enabled_log_level" in
-        WARN)
-            enabled_log_level=$WARN_LEVEL
-            ;;
-        INFO)
-            enabled_log_level=$INFO_LEVEL
-            ;;
-        DEBUG)
-            enabled_log_level=$DEBUG_LEVEL
-            ;;
-        *)
-            enabled_log_level=$WARN_LEVEL
-            ;;
-    esac
+# Dirs
+SCRIPT_FILE_PATH=`realpath $0`
+SCRIPT_DIR_PATH=`dirname "${SCRIPT_FILE_PATH}"`
+MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
-    local log_level=$1
-    shift
-
-    if [ $log_level -le $enabled_log_level ]; then
-        case $log_level in 
-            $INFO_LEVEL)
-                echo -e "\033[33m\033[01m\033[05m[INFO] $@ \033[0m"
-                ;;
-            $WARN_LEVEL)
-                echo -e "\033[31m\033[01m[WARN] $@ \033[0m"
-                ;;
-            $DEBUG_LEVEL)
-                echo "[DEBUG] $@"
-                ;;
-            *)
-                # Do nothing
-                ;;
-        esac
-    fi
-}
-
-__warn() {
-    __log $WARN_LEVEL $@
-}
-__info() {
-    __log $INFO_LEVEL $@
-}
-__debug() {
-    __log $DEBUG_LEVEL $@
-}
+# source common config
+for each_i in "${SCRIPT_DIR_PATH}"/include.*.conf; do
+    if [ -f "$each_i" ]; then . "$each_i"; fi
+done
 
 #
 # find java cmd
@@ -200,7 +154,7 @@ __execute() {
     elif [ "$3" == "BACKGROUND" ]; then
         foreground=""
     else
-        __warn "Invalid argument \$3: \"$3\""
+        __fatal "Invalid argument \$3: \"$3\""
         false
     fi
 
@@ -500,11 +454,11 @@ __execute() {
             java_opts[${#java_opts[@]}]="${main_jar_filepath}"
         elif [ -n "$main_jar_filepath" ]; then
             # multiple jars found
-            __warn "Multiple jars found in \"$unslashed_project_dir\", please package into a single executable jar: $main_jar_filepath"
+            __fatal "Multiple jars found in \"$unslashed_project_dir\", please package into a single executable jar: $main_jar_filepath"
             false
         else
             # no jar found
-            __warn "No jar found in \"$unslashed_project_dir\", please package a single executable jar"
+            __fatal "No jar found in \"$unslashed_project_dir\", please package a single executable jar"
             false
         fi
     fi
@@ -658,7 +612,7 @@ __deploy() {
 
     local unslashed_project_dir="${project_dir%%/}"
     if [ -z "$unslashed_project_dir" ]; then 
-        __warn "Invalid project dir specified: \"$project_dir\""
+        __fatal "Invalid project dir specified: \"$project_dir\""
         false
     fi
 
@@ -699,7 +653,7 @@ __deploy() {
 
         __info "Artifact file \"$artifact_file\" being deployed into \"$tagged_project_dir\""
     else
-        __warn "Artifact file \"$artifact_file\" not exists"
+        __fatal "Artifact file \"$artifact_file\" not exists"
         false
     fi
 }
@@ -715,7 +669,7 @@ __rollback() {
 
     local unslashed_project_dir="${project_dir%%/}"
     if [ -z "$unslashed_project_dir" ]; then 
-        __warn "Invalid project dir specified: \"$project_dir\""
+        __fatal "Invalid project dir specified: \"$project_dir\""
         false
     fi
 
@@ -766,9 +720,21 @@ __rollback() {
 
             __info "Project \"$unslashed_project_dir\" being rollbacked to \"$citem\""
         else
-            __warn "Invalid choice \"$choice\""
+            __fatal "Invalid choice \"$choice\""
             false
         fi
+    fi
+}
+
+__assert_directory_exists_or_exit() {
+    if [ -z "$1" ]; then
+        __fatal "Project directory not specified"
+        __usage
+        exit 1
+    elif [ ! -d "$1" ]; then
+        __fatal "Project directory \"$1\" not exists"
+        __usage
+        exit 1
     fi
 }
 
@@ -785,45 +751,54 @@ __debug "Expanded target_project_dir: \"$target_project_dir\""
 target_project_dir="${target_project_dir%%/}/"
 if [ -d "$target_project_dir" ]; then
     iam_tag=`realpath -s $target_project_dir | sha256sum | cut -d ' ' -f 1`
-
-    # $2 .. $N is/are parsed as commands
-    while [ "$#" -gt "0" ]; do
-        each_arg="$1"; shift
-        __debug "Parsed command \"$each_arg\""
-        case "${each_arg}" in
-            "run")
-                __run "$target_project_dir" "$iam_tag"
-                ;;
-            "start")
-                __start "$target_project_dir" "$iam_tag"
-                ;;
-            "stop")
-                __stop "$target_project_dir" "$iam_tag"
-                ;;
-            "check")
-                __check "$target_project_dir" "$iam_tag"
-                ;;
-            "status")
-                __status "$target_project_dir" "$iam_tag"
-                ;;
-            "deploy")
-                tmp="${1:-}"; shift
-                if [ -n "$tmp" -a -f "$tmp" ]; then
-                    __deploy "$target_project_dir" "$tmp"
-                fi
-                ;;
-            "rollback")
-                __rollback "$target_project_dir"
-                ;;
-            *)
-                __warn "Unknown command \"${each_arg}\""
-                false
-                ;;
-        esac
-    done
 else
-    __warn "Working directory not exists: $target_project_dir"
-    false
+    iam_tag=`realpath -s $0 | sha256sum | cut -d ' ' -f 1`
 fi
+
+# $2 .. $N is/are parsed as commands
+while [ "$#" -gt "0" ]; do
+    each_arg="$1"; shift
+    __debug "Parsed command \"$each_arg\""
+    case "${each_arg}" in
+        "run")
+            __assert_directory_exists_or_exit "$target_project_dir"
+
+            __run "$target_project_dir" "$iam_tag"
+            ;;
+        "start")
+            __assert_directory_exists_or_exit "$target_project_dir"
+
+            __start "$target_project_dir" "$iam_tag"
+            ;;
+        "stop")
+            __assert_directory_exists_or_exit "$target_project_dir"
+
+            __stop "$target_project_dir" "$iam_tag"
+            ;;
+        "check")
+            __assert_directory_exists_or_exit "$target_project_dir"
+
+            __check "$target_project_dir" "$iam_tag"
+            ;;
+        "status")
+            __assert_directory_exists_or_exit "$target_project_dir"
+
+            __status "$target_project_dir" "$iam_tag"
+            ;;
+        "deploy")
+            tmp="${1:-}"; shift
+            if [ -n "$tmp" -a -f "$tmp" ]; then
+                __deploy "$target_project_dir" "$tmp"
+            fi
+            ;;
+        "rollback")
+            __rollback "$target_project_dir"
+            ;;
+        *)
+            __fatal "Unknown command \"${each_arg}\""
+            false
+            ;;
+    esac
+done
 
 # vim:set nu rnu list et sr ts=4 sw=4 ft=sh:

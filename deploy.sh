@@ -9,17 +9,25 @@
 set -euo pipefail
 IFS=$'\t\n'
 
+LOG_LEVEL="${LOG_LEVEL:-WARN}"
+export LOG_LEVEL
+
 #
 # Dirs
 SCRIPT_FILE_PATH=`realpath $0`
 SCRIPT_DIR_PATH=`dirname "${SCRIPT_FILE_PATH}"`
 MAIN_SCRIPT_PATH="${SCRIPT_DIR_PATH}/main.script"
 
+# source common config
+for each_i in "${SCRIPT_DIR_PATH}"/include.*.conf; do
+    if [ -f "$each_i" ]; then . "$each_i"; fi
+done
+
 __usage() {
-    echo ""
-    echo "Usage: ${SCRIPT_FILE_PATH##*/} artifact_file project_dir"
-    echo "   OR: ${SCRIPT_FILE_PATH##*/} project_dir artifact_file"
-    echo ""
+    __warn ""
+    __warn "Usage: ${SCRIPT_FILE_PATH##*/} artifact_file project_dir"
+    __warn "   OR: ${SCRIPT_FILE_PATH##*/} project_dir artifact_file"
+    __warn ""
 }
 
 if [ $# -eq 2 ]; then
@@ -36,18 +44,18 @@ if [ $# -eq 2 ]; then
         artifact_file="$b"
         target_dir="${a%%/}"
     else
-        echo "No artifact file specified"
+        __fatal "No artifact file specified"
         __usage
         exit 1
     fi
 
     bash "$MAIN_SCRIPT_PATH" "$target_dir" deploy "$artifact_file"
 
-    echo ""
-    echo "Note that target project service is not restarted"
-    echo "You should restarted it manually against \"$target_dir\""
+    __warn ""
+    __warn "Note that target project service is not restarted"
+    __warn "You should restarted it manually against \"$target_dir\""
 else
-    echo "Incorrect number of arguments"
+    __fatal "Incorrect number of arguments"
     __usage
     exit 1
 fi
