@@ -19,13 +19,24 @@ SSH=(
     #"echo"
     "ssh"
     "-4"
+    "-q"
     "-T"
+)
+SCP=(
+    #"echo"
+    "scp"
+    "-4"
+    "-q"
+    # Limit QPS in 1024 Kbit/s
+    # "-l" "1024"
 )
 RSYNC=(
     #"echo"
     "rsync"
     "-4"
     "-a"
+    "-q"
+    # "--bwlimit=1.5m"
 )
 
 #
@@ -42,6 +53,7 @@ __usage() {
     echo -e "\t\tstart stop restart status sync run"
     echo -e "\t      PATH_TO_TARGET_PROJECT_DIR is a symlink to or the directory for target project"
     echo -e "\t      REMOTE_IP-s are ip for target hosts"
+    echo "OR ${SCRIPT_FILE_PATH##*/} exec_to_be_ran_via_ssh"
     echo ""
 }
 
@@ -167,15 +179,110 @@ __sync_run() {
     done
 }
 
+#
+# Run SCP on localhost and remote hosts one by one.
+#
+# $@: files to be scp back
+__scp() {
+    for each_f in "$@"; do
+        local lf="${each_f##*/}"
+        lf="${lf%%/}"
+        for each_i in "${REMOTE_IPS[@]}"; do
+            if [ -n "$each_i" ]; then
+                is_local=""
+                for each_j in "${local_ips[@]}"; do
+                    if [ "$each_i" == "$each_j" ]; then
+                        is_local="Y"
+                    fi
+                done
+
+                local h="$remote_user@$each_i"
+
+                echo -n "Try to scp \"$each_f\""
+                if [ -z "$is_local" ]; then
+                    echo -n " from remote host \"$h\""
+                else
+                    echo -n " from localhost"
+                fi
+                echo "" # new line
+
+                if [ -z "$is_local" ]; then
+                    "${SCP[@]}" "$h:$each_f" "${lf}_${each_i}"
+                else
+                    cp -f "$each_f" "${lf}_${each_i}"
+                fi
+
+                echo -n "Try to scp \"$each_f\""
+                if [ -z "$is_local" ]; then
+                    echo -n " from remote host \"$h\""
+                else
+                    echo -n " from localhost"
+                fi
+                echo " --> DONE"
+            fi
+        done
+    done
+}
+
+#
+# Run SSH on localhost and remote hosts one by one.
+#
+# $@: exec and args to be ran
+__ssh() {
+    for each_i in "${REMOTE_IPS[@]}"; do
+        if [ -n "$each_i" ]; then
+            is_local=""
+            for each_j in "${local_ips[@]}"; do
+                if [ "$each_i" == "$each_j" ]; then
+                    is_local="Y"
+                fi
+            done
+
+            echo -n "Try to exec"
+            for each_k in "$@"; do
+                echo -n " \"$each_k\""
+            done
+
+            local h="$remote_user@$each_i"
+            if [ -z "$is_local" ]; then
+                echo -n " on remote host \"$h\""
+            else
+                echo -n " on localhost"
+            fi
+            echo "" # new line
+
+            if [ -z "$is_local" ]; then
+                "${SSH[@]}" $h "$@"
+            else
+                "$@"
+            fi
+
+            echo -n "Try to exec"
+            for each_k in "$@"; do
+                echo -n " \"$each_k\""
+            done
+            if [ -z "$is_local" ]; then
+                echo -n " on remote host \"$h\""
+            else
+                echo -n " on localhost"
+            fi
+            echo " --> DONE"
+        fi
+    done
+}
+
 c="${1:-sync}"; shift || true
 
 d="${1:-}"; shift || true
-if [ ! -d "$d" ]; then
-    echo "Project directory not exists \"$d\""
-    __usage
-    exit 1
-fi
 d="$(realpath -s $d)"
+
+__assert_directory_exists_or_exit() {
+    if [ ! -d "$1" ]; then
+        echo "Project directory not exists \"$1\""
+        __usage
+        exit 1
+    fi
+}
 
 REMOTE_IPS=("")
 for each_i in "$@"; do
@@ -185,17 +292,47 @@ done
 echo "Try to execute command \"$c\" for project \"$d\" onto \"${REMOTE_IPS[@]}\""
 case "$c" in
     "start"|"stop"|"status"| "check")
+        __assert_directory_exists_or_exit "$d"
+
         __sync_run "$d" "$c"
         ;;
     "restart")
+        __assert_directory_exists_or_exit "$d"
+
         __sync_run "$d" stop
         __sync_run "$d" start
         ;;
     "sync")
+        __assert_directory_exists_or_exit "$d"
+
         __sync "$d"
         ;;
     "run")
+        __assert_directory_exists_or_exit "$d"
+
         __async_run "$d" run
+        ;;
+    "ssh "*)
+        c="${c#ssh }"
+        IFS=' '
+        S=("")
+        i=0
+        for each_i in $c; do
+            S[$((i++))]="$each_i"
+        done
+        IFS=$'\t\n'
+        __ssh "${S[@]}"
+        ;;
+    "scp "*)
+        c="${c#scp }"
+        IFS=' '
+        S=("")
+        i=0
+        for each_i in $c; do
+            S[$((i++))]="$each_i"
+        done
+        IFS=$'\t\n'
+        __scp "${S[@]}"
         ;;
     "help")
         __usage
